@@ -12,19 +12,25 @@ import type { ModelTool } from '../llm/types.ts';
 // ---------------------------------------------------------------------------
 
 export type JsonSchema =
-  | { type: 'string'; description?: string }
+  | { type: 'string'; description?: string; enum?: string[] }
   | { type: 'number'; description?: string }
   | { type: 'boolean'; description?: string }
+  | { type: 'array'; description?: string; items?: JsonSchema }
   | { type: 'object'; description?: string; properties?: Record<string, JsonSchema>; required?: string[] };
 
 export type ValidateResult = { ok: true; value: unknown } | { ok: false; errors: string[] };
 
 export function validate(schema: JsonSchema, value: unknown, path = '$'): ValidateResult {
   switch (schema.type) {
-    case 'string':
-      return typeof value === 'string'
-        ? { ok: true, value }
-        : { ok: false, errors: [`${path}: expected string, got ${typeof value}`] };
+    case 'string': {
+      if (typeof value !== 'string') {
+        return { ok: false, errors: [`${path}: expected string, got ${typeof value}`] };
+      }
+      if (schema.enum && !schema.enum.includes(value)) {
+        return { ok: false, errors: [`${path}: expected one of ${schema.enum.join(', ')}`] };
+      }
+      return { ok: true, value };
+    }
     case 'number':
       return typeof value === 'number' && Number.isFinite(value)
         ? { ok: true, value }
@@ -33,6 +39,18 @@ export function validate(schema: JsonSchema, value: unknown, path = '$'): Valida
       return typeof value === 'boolean'
         ? { ok: true, value }
         : { ok: false, errors: [`${path}: expected boolean, got ${typeof value}`] };
+    case 'array': {
+      if (!Array.isArray(value)) {
+        return { ok: false, errors: [`${path}: expected array, got ${typeof value}`] };
+      }
+      if (!schema.items) return { ok: true, value };
+      const errors: string[] = [];
+      value.forEach((item, i) => {
+        const r = validate(schema.items!, item, `${path}[${i}]`);
+        if (!r.ok) errors.push(...r.errors);
+      });
+      return errors.length > 0 ? { ok: false, errors } : { ok: true, value };
+    }
     case 'object': {
       if (typeof value !== 'object' || value === null || Array.isArray(value)) {
         return { ok: false, errors: [`${path}: expected object`] };
